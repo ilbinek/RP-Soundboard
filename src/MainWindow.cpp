@@ -18,6 +18,9 @@
 #include <QPixmap>
 #include <QPainter>
 #include <QPainterPath>
+#include <QMouseEvent>
+#include <QStyle>
+#include <QStyleOptionSlider>
 #include <algorithm>
 #include <cmath>
 
@@ -260,6 +263,7 @@ MainWindow::MainWindow(ConfigModel* model, QWidget* parent /*= 0*/) :
 			if (duration > 0.0)
 				ui->seekTimeLabel->setText(formatTime((value / 1000.0) * duration));
 		});
+	ui->seekSlider->installEventFilter(this);
 
 	m_youtubeResolver = new YoutubeResolver(this);
 	connect(m_youtubeResolver, &YoutubeResolver::progress, this, &MainWindow::onYoutubeResolveProgress);
@@ -802,6 +806,17 @@ void MainWindow::onSeekPositionTimer()
 }
 
 
+void MainWindow::seekFromSliderValue(int value)
+{
+	const double duration = sb_getPlaybackDuration();
+	if (duration <= 0.0)
+		return;
+	const double seconds = (value / 1000.0) * duration;
+	sb_seekPlayback(seconds);
+	ui->seekTimeLabel->setText(formatTime(seconds));
+}
+
+
 void MainWindow::onSeekSliderPressed()
 {
 	m_seekDragging = true;
@@ -810,14 +825,48 @@ void MainWindow::onSeekSliderPressed()
 
 void MainWindow::onSeekSliderReleased()
 {
-	const double duration = sb_getPlaybackDuration();
-	if (duration > 0.0)
-	{
-		const double seconds = (ui->seekSlider->value() / 1000.0) * duration;
-		sb_seekPlayback(seconds);
-		ui->seekTimeLabel->setText(formatTime(seconds));
-	}
+	seekFromSliderValue(ui->seekSlider->value());
 	m_seekDragging = false;
+}
+
+
+bool MainWindow::eventFilter(QObject* obj, QEvent* evt)
+{
+	if (obj == ui->seekSlider && ui->seekSlider->isEnabled() &&
+		(evt->type() == QEvent::MouseButtonPress || evt->type() == QEvent::MouseButtonDblClick))
+	{
+		auto* mouse = static_cast<QMouseEvent*>(evt);
+		if (mouse->button() == Qt::LeftButton)
+		{
+			QStyleOptionSlider opt;
+			opt.initFrom(ui->seekSlider);
+			opt.orientation = ui->seekSlider->orientation();
+			opt.minimum = ui->seekSlider->minimum();
+			opt.maximum = ui->seekSlider->maximum();
+			opt.sliderPosition = ui->seekSlider->value();
+			opt.sliderValue = ui->seekSlider->value();
+
+			const QRect handle = ui->seekSlider->style()->subControlRect(
+				QStyle::CC_Slider, &opt, QStyle::SC_SliderHandle, ui->seekSlider
+			);
+			// Click on the groove (not the handle) should jump immediately
+			if (!handle.contains(mouse->pos()))
+			{
+				const int span = ui->seekSlider->width() - handle.width();
+				if (span > 0)
+				{
+					const int x = mouse->pos().x() - handle.width() / 2;
+					const double ratio = std::max(0.0, std::min(1.0, double(x) / double(span)));
+					const int value = ui->seekSlider->minimum() +
+						int(ratio * (ui->seekSlider->maximum() - ui->seekSlider->minimum()) + 0.5);
+					ui->seekSlider->setValue(value);
+					seekFromSliderValue(value);
+					return true;
+				}
+			}
+		}
+	}
+	return QWidget::eventFilter(obj, evt);
 }
 
 

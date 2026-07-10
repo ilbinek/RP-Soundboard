@@ -43,6 +43,7 @@ class YoutubeResolver : public QObject
 	void writeCachedTitle(const QString& basePathWithoutExt, const QString& title) const;
 	void startDownload(const QString& url, const QString& outputTemplate);
 	void fetchTitleThenDownload(const QString& url);
+	void finishWithCachedFile();
 
 	enum class Phase
 	{

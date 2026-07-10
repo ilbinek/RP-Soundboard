@@ -61,6 +61,7 @@ class MainWindow : public QWidget
   protected:
 	virtual void closeEvent(QCloseEvent* evt) override;
 	virtual void showEvent(QShowEvent* evt) override;
+	virtual bool eventFilter(QObject* obj, QEvent* evt) override;
 
   private slots:
 	void onClickedPlay();
@@ -124,6 +125,7 @@ class MainWindow : public QWidget
 	void applyTheme(ThemeMode mode);
 	void resetSeekBar();
 	void updateSeekBarFromPlayback();
+	void seekFromSliderValue(int value);
 	static QString formatTime(double seconds);
 
 	class ModelObserver : public ConfigModel::Observer

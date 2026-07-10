@@ -183,15 +183,13 @@ void YoutubeResolver::startDownload(const QString& url, const QString& outputTem
 	m_phase = Phase::Downloading;
 	emit progress("Downloading audio…");
 	m_process->setProgram(kYtDlp);
+	// Download best audio as-is (no -x/mp3 conversion — that needs a system ffmpeg
+	// and often exits 1 after the file is already written).
 	m_process->setArguments(
 		QStringList() << "--no-playlist"
 					  << "-f"
-					  << "ba/bestaudio"
-					  << "-x"
-					  << "--audio-format"
-					  << "mp3"
-					  << "--audio-quality"
-					  << "0"
+					  << "ba/bestaudio/best"
+					  << "--no-mtime"
 					  << "-o"
 					  << outputTemplate << url
 	);
@@ -246,34 +244,8 @@ void YoutubeResolver::onProcessError(QProcess::ProcessError error)
 }
 
 
-void YoutubeResolver::onProcessFinished(int exitCode, QProcess::ExitStatus exitStatus)
+void YoutubeResolver::finishWithCachedFile()
 {
-	if (m_phase == Phase::Idle)
-		return;
-
-	if (exitStatus != QProcess::NormalExit || exitCode != 0)
-	{
-		const Phase failedPhase = m_phase;
-		m_phase = Phase::Idle;
-		if (failedPhase == Phase::FetchingTitle)
-		{
-			// Title fetch failed — still try download without a title
-			logInfo("yt-dlp title fetch failed (code %d); continuing with download", exitCode);
-			m_title.clear();
-			startDownload(m_url, m_outputTemplate);
-			return;
-		}
-		emit failed(QString("yt-dlp failed (exit %1). Check the URL or update yt-dlp.").arg(exitCode));
-		return;
-	}
-
-	if (m_phase == Phase::FetchingTitle)
-	{
-		startDownload(m_url, m_outputTemplate);
-		return;
-	}
-
-	// Downloading finished
 	m_phase = Phase::Idle;
 	const QString cached = findCachedFile(m_basePath);
 	if (cached.isEmpty())
@@ -289,4 +261,45 @@ void YoutubeResolver::onProcessFinished(int exitCode, QProcess::ExitStatus exitS
 		writeCachedTitle(m_basePath, title);
 
 	emit finished(cached, title);
+}
+
+
+void YoutubeResolver::onProcessFinished(int exitCode, QProcess::ExitStatus exitStatus)
+{
+	if (m_phase == Phase::Idle)
+		return;
+
+	if (exitStatus != QProcess::NormalExit || exitCode != 0)
+	{
+		const Phase failedPhase = m_phase;
+		if (failedPhase == Phase::FetchingTitle)
+		{
+			// Title fetch failed — still try download without a title
+			logInfo("yt-dlp title fetch failed (code %d); continuing with download", exitCode);
+			m_title.clear();
+			startDownload(m_url, m_outputTemplate);
+			return;
+		}
+
+		// yt-dlp sometimes exits non-zero even after writing a usable file
+		// (warnings, post-processors, etc.). Prefer playing what we have.
+		if (!findCachedFile(m_basePath).isEmpty())
+		{
+			logInfo("yt-dlp exited %d but cache file exists; playing it", exitCode);
+			finishWithCachedFile();
+			return;
+		}
+
+		m_phase = Phase::Idle;
+		emit failed(QString("yt-dlp failed (exit %1). Check the URL or update yt-dlp.").arg(exitCode));
+		return;
+	}
+
+	if (m_phase == Phase::FetchingTitle)
+	{
+		startDownload(m_url, m_outputTemplate);
+		return;
+	}
+
+	finishWithCachedFile();
 }
