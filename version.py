@@ -15,8 +15,26 @@ productName = 'ts3sb'; # Set product name here
 outFileVersion = 'src/version/version.h'
 outFilePackage = 'deploy/package.ini'
 
+def get_version_string():
+	try:
+		return subprocess.check_output(
+			['git', 'describe', '--tags'], stderr=subprocess.DEVNULL
+		).decode().strip()
+	except (subprocess.CalledProcessError, FileNotFoundError):
+		# No tags in this clone (common on forks / shallow CI checkouts).
+		# Still produce a parseable version so the build can proceed.
+		try:
+			commit = subprocess.check_output(
+				['git', 'rev-parse', '--short', 'HEAD'], stderr=subprocess.DEVNULL
+			).decode().strip()
+			return 'v0.0.0-untagged-' + commit
+		except (subprocess.CalledProcessError, FileNotFoundError):
+			return 'v0.0.0-untagged'
+
+
 def main():
-	versionStr = subprocess.check_output(['git', 'describe', '--tags']).decode().strip()
+	versionStr = get_version_string()
+	print('Using version: ' + versionStr)
 
 	checkFile = 'release/git-state.txt'
 	if os.path.isfile(checkFile):
