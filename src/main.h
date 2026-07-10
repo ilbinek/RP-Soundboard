@@ -34,6 +34,9 @@ void sb_playButton(int btn);
 void sb_setConfig(int cfg);
 void sb_openAbout();
 void sb_pauseButtonPressed();
+void sb_seekPlayback(double seconds);
+double sb_getPlaybackPosition();
+double sb_getPlaybackDuration();
 void sb_onConnectStatusChange(uint64 serverConnectionHandlerID, int newStatus, unsigned int errorNumber);
 void sb_getInternalHotkeyName(int buttonId, char* buf); // buf should be at sized 16
 void sb_getInternalConfigHotkeyName(int configId, char* buf);

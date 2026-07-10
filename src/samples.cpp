@@ -18,7 +18,8 @@
 #include <queue>
 #include <vector>
 #include <cassert>
-#include <math.h>
+#include <cmath>
+#include <algorithm>
 
 // #define MEASURE_PERFORMANCE
 
@@ -381,4 +382,63 @@ void Sampler::unpausePlayback()
 		m_state = ePLAYING;
 		emit onUnpausePlaying();
 	}
+}
+
+
+double Sampler::getPlaybackPosition()
+{
+	std::lock_guard<std::mutex> Lock(m_mutex);
+	if (!m_inputFile || m_state == eSILENT)
+		return 0.0;
+
+	double pos = m_inputFile->getPositionSeconds();
+
+	// Subtract samples still buffered but not yet heard
+	SampleBuffer::Lock sblc(m_sbCapture.getMutex());
+	SampleBuffer::Lock sblp(m_sbPlayback.getMutex());
+	int buffered = 0;
+	if (m_state == ePLAYING_PREVIEW)
+		buffered = m_sbPlayback.avail();
+	else
+		buffered = std::max(m_sbCapture.avail(), m_sbPlayback.avail());
+
+	const double sampleRate = 48000.0;
+	pos -= double(buffered) / sampleRate;
+	if (pos < 0.0)
+		pos = 0.0;
+	return pos;
+}
+
+
+double Sampler::getPlaybackDuration()
+{
+	std::lock_guard<std::mutex> Lock(m_mutex);
+	if (!m_inputFile || m_state == eSILENT)
+		return 0.0;
+	return m_inputFile->getDurationSeconds();
+}
+
+
+bool Sampler::seekPlayback(double seconds)
+{
+	std::lock_guard<std::mutex> Lock(m_mutex);
+	if (!m_inputFile || m_state == eSILENT)
+		return false;
+
+	double duration = m_inputFile->getDurationSeconds();
+	if (duration > 0.0)
+		seconds = std::max(0.0, std::min(seconds, duration));
+	else
+		seconds = std::max(0.0, seconds);
+
+	// UI position is relative to the play window; convert to absolute file time
+	double absolute = m_inputFile->getStartPosSeconds() + seconds;
+	if (m_inputFile->seek(absolute) != 0)
+		return false;
+
+	SampleBuffer::Lock sblc(m_sbCapture.getMutex());
+	SampleBuffer::Lock sblp(m_sbPlayback.getMutex());
+	m_sbCapture.consume(nullptr, m_sbCapture.avail());
+	m_sbPlayback.consume(nullptr, m_sbPlayback.avail());
+	return true;
 }

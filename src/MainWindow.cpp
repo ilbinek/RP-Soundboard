@@ -18,6 +18,7 @@
 #include <QPixmap>
 #include <QPainter>
 #include <QPainterPath>
+#include <algorithm>
 #include <cmath>
 
 #include "MainWindow.h"
@@ -32,6 +33,8 @@
 #include "ExpandableSection.h"
 #include "samples.h"
 #include "SoundButton.h"
+#include "YoutubeResolver.h"
+#include "SoundInfo.h"
 
 #ifdef _WIN32
 #include "Windows.h"
@@ -131,7 +134,10 @@ MainWindow::MainWindow(ConfigModel* model, QWidget* parent /*= 0*/) :
 	ui(new Ui::MainWindow),
 	m_model(model),
 	m_modelObserver(*this),
-	m_buttonBubble(nullptr)
+	m_buttonBubble(nullptr),
+	seekPositionTimer(nullptr),
+	m_youtubeResolver(nullptr),
+	m_seekDragging(false)
 {
 	/* Ensure resources are loaded */
 	Q_INIT_RESOURCE(qtres);
@@ -237,6 +243,30 @@ MainWindow::MainWindow(ConfigModel* model, QWidget* parent /*= 0*/) :
 	playingIconTimer = new QTimer(this);
 	playingIconTimer->setInterval(150);
 	connect(playingIconTimer, SIGNAL(timeout()), this, SLOT(onPlayingIconTimer()));
+
+	seekPositionTimer = new QTimer(this);
+	seekPositionTimer->setInterval(150);
+	connect(seekPositionTimer, &QTimer::timeout, this, &MainWindow::onSeekPositionTimer);
+	resetSeekBar();
+
+	connect(ui->seekSlider, &QSlider::sliderPressed, this, &MainWindow::onSeekSliderPressed);
+	connect(ui->seekSlider, &QSlider::sliderReleased, this, &MainWindow::onSeekSliderReleased);
+	connect(ui->seekSlider, &QSlider::valueChanged, this,
+		[this](int value)
+		{
+			if (!m_seekDragging)
+				return;
+			const double duration = sb_getPlaybackDuration();
+			if (duration > 0.0)
+				ui->seekTimeLabel->setText(formatTime((value / 1000.0) * duration));
+		});
+
+	m_youtubeResolver = new YoutubeResolver(this);
+	connect(m_youtubeResolver, &YoutubeResolver::progress, this, &MainWindow::onYoutubeResolveProgress);
+	connect(m_youtubeResolver, &YoutubeResolver::finished, this, &MainWindow::onYoutubeResolveFinished);
+	connect(m_youtubeResolver, &YoutubeResolver::failed, this, &MainWindow::onYoutubeResolveFailed);
+	connect(ui->youtubePlayButton, &QPushButton::clicked, this, &MainWindow::onYoutubePlayClicked);
+	connect(ui->youtubeUrlEdit, &QLineEdit::returnPressed, this, &MainWindow::onYoutubePlayClicked);
 
 	Sampler* sampler = sb_getSampler();
 	connect(
@@ -661,8 +691,17 @@ void MainWindow::showSetHotkeyMenu(const char* hotkeyName, const QPoint& point)
 
 void MainWindow::onStartPlayingSound(bool preview, QString filename)
 {
-	QFileInfo info(filename);
-	ui->playingLabel->setText(info.fileName());
+	Q_UNUSED(preview);
+	if (!m_youtubeDisplayTitle.isEmpty())
+	{
+		ui->playingLabel->setText(m_youtubeDisplayTitle);
+		m_youtubeDisplayTitle.clear();
+	}
+	else
+	{
+		QFileInfo info(filename);
+		ui->playingLabel->setText(info.fileName());
+	}
 	setPlayingLabelIcon(0);
 	ui->playingIconLabel->show();
 	playingIconIndex = 1;
@@ -670,6 +709,9 @@ void MainWindow::onStartPlayingSound(bool preview, QString filename)
 	ui->b_stop->setEnabled(true);
 	ui->b_pause->setEnabled(true);
 	ui->b_pause->setIcon(m_pauseIcon);
+
+	updateSeekBarFromPlayback();
+	seekPositionTimer->start();
 }
 
 
@@ -679,6 +721,7 @@ void MainWindow::onStopPlayingSound()
 	ui->playingLabel->setText("");
 	ui->playingIconLabel->hide();
 	ui->b_pause->setIcon(m_pauseIcon);
+	resetSeekBar();
 }
 
 
@@ -700,6 +743,131 @@ void MainWindow::onPlayingIconTimer()
 {
 	setPlayingLabelIcon(playingIconIndex);
 	++playingIconIndex %= 4;
+}
+
+
+QString MainWindow::formatTime(double seconds)
+{
+	if (seconds < 0.0)
+		seconds = 0.0;
+	const int total = static_cast<int>(seconds + 0.5);
+	const int mins = total / 60;
+	const int secs = total % 60;
+	return QString("%1:%2").arg(mins).arg(secs, 2, 10, QChar('0'));
+}
+
+
+void MainWindow::resetSeekBar()
+{
+	if (seekPositionTimer)
+		seekPositionTimer->stop();
+	m_seekDragging = false;
+	ui->seekSlider->setEnabled(false);
+	ui->seekSlider->setValue(0);
+	ui->seekTimeLabel->setText("0:00");
+	ui->seekDurationLabel->setText("0:00");
+}
+
+
+void MainWindow::updateSeekBarFromPlayback()
+{
+	const double duration = sb_getPlaybackDuration();
+	const double position = sb_getPlaybackPosition();
+
+	ui->seekDurationLabel->setText(duration > 0.0 ? formatTime(duration) : "?:??");
+	ui->seekTimeLabel->setText(formatTime(position));
+
+	if (duration > 0.0)
+	{
+		ui->seekSlider->setEnabled(true);
+		if (!m_seekDragging)
+		{
+			const int value = static_cast<int>((position / duration) * 1000.0 + 0.5);
+			ui->seekSlider->setValue(std::max(0, std::min(1000, value)));
+		}
+	}
+	else
+	{
+		ui->seekSlider->setEnabled(false);
+		ui->seekSlider->setValue(0);
+	}
+}
+
+
+void MainWindow::onSeekPositionTimer()
+{
+	if (m_seekDragging)
+		return;
+	updateSeekBarFromPlayback();
+}
+
+
+void MainWindow::onSeekSliderPressed()
+{
+	m_seekDragging = true;
+}
+
+
+void MainWindow::onSeekSliderReleased()
+{
+	const double duration = sb_getPlaybackDuration();
+	if (duration > 0.0)
+	{
+		const double seconds = (ui->seekSlider->value() / 1000.0) * duration;
+		sb_seekPlayback(seconds);
+		ui->seekTimeLabel->setText(formatTime(seconds));
+	}
+	m_seekDragging = false;
+}
+
+
+void MainWindow::onYoutubePlayClicked()
+{
+	const QString url = ui->youtubeUrlEdit->text().trimmed();
+	if (url.isEmpty())
+		return;
+
+	if (!YoutubeResolver::isYoutubeUrl(url))
+	{
+		ui->labelStatus->setText("Not a YouTube URL");
+		return;
+	}
+
+	ui->youtubeUrlEdit->setEnabled(false);
+	ui->youtubePlayButton->setEnabled(false);
+	ui->labelStatus->setText("Resolving YouTube…");
+	m_youtubeResolver->resolve(url);
+}
+
+
+void MainWindow::onYoutubeResolveProgress(const QString& message)
+{
+	ui->labelStatus->setText(message);
+}
+
+
+void MainWindow::onYoutubeResolveFinished(const QString& localPath, const QString& title)
+{
+	ui->youtubeUrlEdit->setEnabled(true);
+	ui->youtubePlayButton->setEnabled(true);
+	ui->labelStatus->setText("");
+
+	m_youtubeDisplayTitle = title;
+	SoundInfo sound;
+	sound.filename = localPath;
+	if (sb_playFile(sound) != 0)
+	{
+		m_youtubeDisplayTitle.clear();
+		ui->labelStatus->setText("Failed to play downloaded audio");
+	}
+}
+
+
+void MainWindow::onYoutubeResolveFailed(const QString& error)
+{
+	ui->youtubeUrlEdit->setEnabled(true);
+	ui->youtubePlayButton->setEnabled(true);
+	ui->labelStatus->setText(error);
 }
 
 

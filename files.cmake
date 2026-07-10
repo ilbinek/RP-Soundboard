@@ -54,4 +54,6 @@ set(sources
 	src/ts3log.h
 	src/UpdateChecker.cpp
 	src/UpdateChecker.h
+	src/YoutubeResolver.cpp
+	src/YoutubeResolver.h
 )

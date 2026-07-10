@@ -13,6 +13,8 @@ It comes with a set of predefined sounds but of course you can choose your own.
 - Crop sounds to play only your favorite portion of a sound
 - Adjust volume gain for each sound file
 - Set keyboard hotkeys for each of your buttons
+- Seek bar to scrub through the currently playing sound
+- Paste a YouTube URL to download and play its audio (requires [yt-dlp](https://github.com/yt-dlp/yt-dlp) installed and available on your PATH)
 
 # Installation
 ## On Windows

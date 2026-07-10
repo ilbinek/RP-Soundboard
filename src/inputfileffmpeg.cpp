@@ -67,6 +67,9 @@ class InputFileFFmpeg : public InputFile
 	bool done() const override;
 	int seek(double seconds) override;
 	int64_t outputSamplesEstimation() const override;
+	double getPositionSeconds() const override;
+	double getDurationSeconds() const override;
+	double getStartPosSeconds() const override;
 
   private:
 	bool openInternal(const char* filename, double startPosSeconds, double playTimeSeconds);
@@ -94,12 +97,13 @@ class InputFileFFmpeg : public InputFile
 	uint8_t* m_outBuf;
 	bool m_opened;
 	std::atomic<bool> m_done;
-	std::mutex m_mutex;
+	mutable std::mutex m_mutex;
 	int64_t m_decodedSamples;
 	int64_t m_convertedSamples;
 	int64_t m_maxConvertedSamples;
 	int64_t m_nextSeekTimestamp;
 	int64_t m_skipSamples;
+	double m_startPosSeconds;
 };
 
 
@@ -131,6 +135,7 @@ void InputFileFFmpeg::reset()
 	m_maxConvertedSamples = 0;
 	m_nextSeekTimestamp = 0;
 	m_skipSamples = 0;
+	m_startPosSeconds = 0.0;
 }
 
 
@@ -229,12 +234,22 @@ bool InputFileFFmpeg::openInternal(const char* filename, double startPosSeconds,
 	}
 
 	m_opened = true;
+	m_startPosSeconds = std::max(0.0, startPosSeconds);
 
-	if (startPosSeconds > 0.0)
-		seekNoLock(startPosSeconds);
+	if (m_startPosSeconds > 0.0)
+		seekNoLock(m_startPosSeconds);
 
 	if (playTimeSeconds > 0.0)
-		m_maxConvertedSamples = uint64_t(playTimeSeconds * (double)m_outputSamplerate + 0.5);
+		m_maxConvertedSamples = int64_t(playTimeSeconds * (double)m_outputSamplerate + 0.5);
+	else
+	{
+		int64_t totalSamples = outputSamplesEstimation();
+		if (totalSamples > 0)
+		{
+			int64_t startSamples = int64_t(m_startPosSeconds * (double)m_outputSamplerate + 0.5);
+			m_maxConvertedSamples = std::max(int64_t(0), totalSamples - startSamples);
+		}
+	}
 
 	return true;
 }
@@ -268,6 +283,16 @@ int InputFileFFmpeg::seekNoLock(double seconds)
 		return -1;
 	avcodec_flush_buffers(m_codecCtx);
 	m_nextSeekTimestamp = ts;
+	m_skipSamples = 0;
+	m_done = false;
+
+	double relative = std::max(0.0, seconds - m_startPosSeconds);
+	m_convertedSamples = int64_t(relative * (double)m_outputSamplerate + 0.5);
+	if (m_maxConvertedSamples > 0 && m_convertedSamples >= m_maxConvertedSamples)
+	{
+		m_convertedSamples = m_maxConvertedSamples;
+		m_done = true;
+	}
 	return 0;
 }
 
@@ -279,6 +304,38 @@ int InputFileFFmpeg::seek(double seconds)
 		return -1;
 
 	return seekNoLock(seconds);
+}
+
+
+double InputFileFFmpeg::getPositionSeconds() const
+{
+	Lock lock(m_mutex);
+	if (!m_opened || m_outputSamplerate <= 0)
+		return 0.0;
+	return double(m_convertedSamples) / double(m_outputSamplerate);
+}
+
+
+double InputFileFFmpeg::getDurationSeconds() const
+{
+	Lock lock(m_mutex);
+	if (!m_opened || m_outputSamplerate <= 0)
+		return 0.0;
+	if (m_maxConvertedSamples > 0)
+		return double(m_maxConvertedSamples) / double(m_outputSamplerate);
+
+	int64_t totalSamples = outputSamplesEstimation();
+	if (totalSamples <= 0)
+		return 0.0;
+	double totalSec = double(totalSamples) / double(m_outputSamplerate);
+	return std::max(0.0, totalSec - m_startPosSeconds);
+}
+
+
+double InputFileFFmpeg::getStartPosSeconds() const
+{
+	Lock lock(m_mutex);
+	return m_startPosSeconds;
 }
 
 
@@ -482,12 +539,16 @@ int InputFileFFmpeg::closeNoLock()
 
 int64_t InputFileFFmpeg::outputSamplesEstimation() const
 {
+	if (!m_fmtCtx || m_streamIndex < 0)
+		return 0;
+
 	AVStream* stream = m_fmtCtx->streams[m_streamIndex];
-	if (stream->duration > 0)
+	if (stream->duration > 0 && stream->time_base.den > 0)
 		return stream->duration * (int64_t)stream->time_base.num * (int64_t)m_outputSamplerate /
 			   (int64_t)stream->time_base.den;
-	else
+	if (m_fmtCtx->duration > 0 && m_fmtCtx->duration != AV_NOPTS_VALUE)
 		return m_fmtCtx->duration * m_outputSamplerate / AV_TIME_BASE;
+	return 0;
 }
 
 

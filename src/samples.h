@@ -52,6 +52,9 @@ class Sampler : public QObject
 	void setMuteMyself(bool enabled);
 	void pausePlayback();
 	void unpausePlayback();
+	double getPlaybackPosition();
+	double getPlaybackDuration();
+	bool seekPlayback(double seconds);
 	inline state_e getState() const
 	{
 		return m_state;

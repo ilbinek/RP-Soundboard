@@ -229,6 +229,25 @@ void sb_pauseButtonPressed()
 		sampler->unpausePlayback();
 }
 
+
+void sb_seekPlayback(double seconds)
+{
+	if (sampler)
+		sampler->seekPlayback(seconds);
+}
+
+
+double sb_getPlaybackPosition()
+{
+	return sampler ? sampler->getPlaybackPosition() : 0.0;
+}
+
+
+double sb_getPlaybackDuration()
+{
+	return sampler ? sampler->getPlaybackDuration() : 0.0;
+}
+
 /** play button by name or index(strtol), return 0 on success */
 int sb_playButtonEx(const char* button)
 {

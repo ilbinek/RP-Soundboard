@@ -19,6 +19,7 @@
 #include <QList>
 #include <QUrl>
 #include <QRadioButton>
+#include <QSlider>
 
 
 #include "ui_MainWindow.h"
@@ -28,6 +29,7 @@
 class SpeechBubble;
 class ExpandableSection;
 class SoundButton;
+class YoutubeResolver;
 
 namespace Ui
 {
@@ -85,6 +87,13 @@ class MainWindow : public QWidget
 	void onFilterEditTextChanged(const QString& filter);
 	void onVolumeSliderContextMenuLocal(const QPoint& point);
 	void onVolumeSliderContextMenuRemote(const QPoint& point);
+	void onSeekSliderPressed();
+	void onSeekSliderReleased();
+	void onSeekPositionTimer();
+	void onYoutubePlayClicked();
+	void onYoutubeResolveFinished(const QString& localPath, const QString& title);
+	void onYoutubeResolveFailed(const QString& error);
+	void onYoutubeResolveProgress(const QString& message);
 
 	void onSetConfig();
 	void onConfigHotkey();
@@ -113,6 +122,9 @@ class MainWindow : public QWidget
 	void openButtonColorDialog(size_t buttonId);
 	QString unescapeCustomText(const QString& text);
 	void applyTheme(ThemeMode mode);
+	void resetSeekBar();
+	void updateSeekBarFromPlayback();
+	static QString formatTime(double seconds);
 
 	class ModelObserver : public ConfigModel::Observer
 	{
@@ -141,7 +153,11 @@ class MainWindow : public QWidget
 	ExpandableSection* settingsSection;
 	ExpandableSection* configsSection;
 	QTimer* playingIconTimer;
+	QTimer* seekPositionTimer;
+	YoutubeResolver* m_youtubeResolver;
 	int playingIconIndex;
+	bool m_seekDragging;
+	QString m_youtubeDisplayTitle;
 	QIcon m_pauseIcon;
 	QIcon m_playIcon;
 	std::array<QRadioButton*, NUM_CONFIGS> m_configRadioButtons;
